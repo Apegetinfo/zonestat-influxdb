@@ -41,6 +41,7 @@ def show_help():
     pass
 
 
+
 def err_stop(msg):
     if msg:
         print msg
@@ -50,7 +51,7 @@ def err_stop(msg):
 def gatherstat():
 
     try:
-        input = subprocess.check_output(['/usr/bin/zonestat', '-p', '-P', 'zones', '-r', 'memory', '1', '1'], stderr = subprocess.STDOUT, shell=None, universal_newlines=None)
+        input = subprocess.check_output(["/usr/bin/zonestat", "-p", "-r", "memory", "1", "1"], stderr = subprocess.STDOUT, shell=None, universal_newlines=None)
         return readstat(input)
 
     except subprocess.CalledProcessError as e:
@@ -66,55 +67,82 @@ def readstat(input):
 
     zones = {}
     lines = input.splitlines()
+    skip = ["total", "system", "global"]
 
-    for line in lines:
+    try:
+        for line in lines:
 
-        if (len(line) > 0):
+            if (len(line) > 0):
 
-            parts = line.split(':')
+                parts = line.split(":")
 
-            if (len(parts) < 8):
+                if (parts[1] in ["header", "footer"]):
+                    continue
+
+            else:
                 continue
-        else:
-            continue
 
-        zname = parts[3]
+            zname = parts[3].strip("[]")
 
-        if (zname == 'global'):
-            continue
+            if (zname in skip):
+                continue
 
-        value = parts[4].replace('K','')
+            value = parts[4].replace("K","")
 
-        if (parts[1] == 'physical-memory'):
-            zones[zname] = ({"pmem" : value, "capped" : parts[6].replace('K','')})
+            if (zname == "resource"):
+                zones["hostmem"] = value
+                continue
 
-        elif (parts[1] == 'virtual-memory'):
-            zones[zname].update({"vmem" : value})
+            if (parts[1] == "physical-memory"):
+                zones[zname] = ({"pmem" : value, "capped" : parts[6].replace("K","")})
 
-        elif (parts[1] == 'locked-memory'):
-            zones[zname].update({"locked" : value})
+            elif (parts[1] == "virtual-memory"):
+                zones[zname].update({"vmem" : value})
 
-        else:
-            continue
+            elif (parts[1] == "locked-memory"):
+                zones[zname].update({"locked" : value})
+
+            else:
+                continue
+    except IndexError:
+            print "Debug: index error in readstat()."
+            sys.exit(1)
 
     return zones
 
 
 def to_int(x):
+
     try:
         n = int(x)
     except ValueError:
         return 0
     return n
 
-def get_total(zones, metric, units='K', mtype='str'):
+
+def str_units(value, units="K"):
+
+    if units is "M":
+        s = str(value/1024)+"M"
+    elif units is "G":
+        s = str(value/1024/1024)+"G"
+    else:
+        s = str(value)
+    return s
+
+
+def get_total(zones, metric, units="K"):
 
     total = 0
 
-    if metric is 'zcount':
+    if metric is "zcount":
         return str(len(zones))
 
     for zn in zones:
+
+        if (zn == "hostmem"):
+            continue
+
         z = zones[zn]
 
         if metric in z:
@@ -122,72 +150,44 @@ def get_total(zones, metric, units='K', mtype='str'):
         else:
             total = 0
 
-    if mtype is 'int':
-        return total
-    else:
-        if units is 'M':
-            s = str(total/1024)+"M"
-        elif units is 'G':
-            s = str(total/1024/1024)+"G"
-        else:
-            s = str(total)
-        return s
+    return str_units(total, units)
+  
 
 
 def get_all_totals(zstat):
 
     totals = {}
-    metrics = [ 'zcount', 'capped', 'pmem', 'vmem', 'locked' ]
+    metrics = [ "zcount", "capped", "pmem", "vmem", "locked" ]
     
     for m in metrics:
          totals[m] = get_total(zstat, m)
 
+    totals["hostmem"] = zstat["hostmem"]
     return totals 
 
 
 def showtotals(z):
-    print
+    
     print "Zones summary:"
     print "---------------------------------------"
-    print "Zones running:\t\t\t %s" % (get_total(z, 'zcount'))
-    print "Total phys memory capped:\t %s " % (get_total(z, 'capped', 'G'))
-    print "Total phys memory used:\t\t %s " % (get_total(z, 'pmem', 'G'))
-    print "Total virtual memory used:\t %s " % ( get_total(z, 'vmem', 'G'))
-    print "Total phys memory locked:\t %s " %  (get_total(z, 'locked', 'G'))
-
-
-def json_out(z):
-    print json.dumps({
-        "data": [
-                {
-                    'pmemused': get_total(z, 'pmem')
-                },
-                {
-                    'pmemcapped': get_total(z, 'capped')
-                },
-                {
-                    'vmemtotal': get_total(z, 'vmem')
-                },
-                {
-                    'pmemlocked': get_total(z, 'locked')
-                },
-                {
-                    'zcount': (get_total(z, 'zcount'))
-                }
-        ]
-    }, indent=4)
-
+    print "Host memory:\t\t\t%s" % ( str_units(int(z["hostmem"]), "G"))
+    print "Zones running:\t\t\t %s" % (get_total(z, "zcount"))
+    print "Total phys memory capped:\t %s " % (get_total(z, "capped", "G"))
+    print "Total phys memory used:\t\t %s " % (get_total(z, "pmem", "G"))
+    print "Total virtual memory used:\t %s " % ( get_total(z, "vmem", "G"))
+    print "Total phys memory locked:\t %s " %  (get_total(z, "locked", "G"))
+    
 
 def http_do(method, url, data):
 
     r = None
 
     try:
-        if (method == 'GET'):
+        if (method == "GET"):
             r = requests.get(url, params=data)
 
-        elif (method == 'POST'):
-            headers = {'Content-Type' : 'application/octet-stream'}
+        elif (method == "POST"):
+            headers = {"Content-Type" : "application/octet-stream"}
             r = requests.post(url, data=data, headers=headers)
         else:
             err_stop("Unknown HTTP method")
@@ -215,18 +215,18 @@ def influx_read(what):
 
     global INFX_URL
 
-    url = INFX_URL + 'query'
+    url = INFX_URL + "query"
 
-    if (what == 'db'):
+    if (what == "db"):
         data  = {"q":"SHOW DATABASES"}
-        resp = http_do('GET', url, data)
+        resp = http_do("GET", url, data)
         return resp.json()
     else:
         return
 
 
 def show_dbs():
-    text = influx_read('db')
+    text = influx_read("db")
     print json.dumps(text, indent=4)
 
 
@@ -235,15 +235,14 @@ def influx_write(data):
     global INFX_URL
     global INFX_DB
 
-    url = INFX_URL + 'write?db='+ INFX_DB
-    resp = http_do('POST', url, data)
+    url = INFX_URL + "write?db="+ INFX_DB
+    resp = http_do("POST", url, data)
 
 
 def store_metrics(zstat):
 
     data = ""
     host = gethostname()
-    print host
     tot = get_all_totals(zstat)
 
     for key,val in tot.items():
@@ -252,20 +251,14 @@ def store_metrics(zstat):
     influx_write(data)
 
 
-
 #START
 
 try:
     sys.argv[1]
     a = sys.argv[1]
 
-    if (a == "-z"):
-        # stats to JSON
-        zstat = gatherstat()
-        json_out(zstat)
-
-    elif (a == "-d"):
-        # save stats to db
+    if (a == "-d"):
+        # save stats
         zstat = gatherstat()
         store_metrics(zstat)
 
