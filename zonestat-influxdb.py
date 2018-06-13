@@ -28,6 +28,7 @@ import sys
 import json
 import subprocess
 import requests
+import types
 from socket import gethostname
 
 
@@ -55,7 +56,7 @@ def gatherstat():
         return readstat(input)
 
     except subprocess.CalledProcessError as e:
-        err_stop("zonestat command failed: %s\nCommand line: [%s]\n\n%s" % ( e.returncode, e.cmd, e.output))
+        err_stop("zonestat command failed: {}\nCommand line: [{}]\n\n{}".format( e.returncode, e.cmd, e.output))
     except OSError as e:
         err_stop("Command not found. This script is for Solaris 11 OS only.")
     except:
@@ -67,7 +68,7 @@ def readstat(input):
 
     zones = {}
     lines = input.splitlines()
-    skip = ["total", "system", "global"]
+    skip = ("total", "system", "global")
 
     try:
         for line in lines:
@@ -76,7 +77,7 @@ def readstat(input):
 
                 parts = line.split(":")
 
-                if (parts[1] in ["header", "footer"]):
+                if (parts[1] in ("header", "footer")):
                     continue
 
             else:
@@ -123,9 +124,9 @@ def to_int(x):
 def str_units(value, units="K"):
 
     if units is "M":
-        s = str(value/1024)+"M"
+        s = str(value/1024) + "M"
     elif units is "G":
-        s = str(value/1024/1024)+"G"
+        s = str(value/1024/1024) + "G"
     else:
         s = str(value)
     return s
@@ -135,8 +136,9 @@ def get_total(zones, metric, units="K"):
 
     total = 0
 
-    if metric is "zcount":
-        return str(len(zones))
+    if (metric == "zcount"):
+        s =  str(len(zones))
+        return s
 
     for zn in zones:
 
@@ -157,26 +159,53 @@ def get_total(zones, metric, units="K"):
 def get_all_totals(zstat):
 
     totals = {}
-    metrics = [ "zcount", "capped", "pmem", "vmem", "locked" ]
+    metrics = ("zcount", "capped", "pmem", "vmem", "locked")
     
     for m in metrics:
-         totals[m] = get_total(zstat, m)
+        totals[m] = get_total(zstat, m)
 
     totals["hostmem"] = zstat["hostmem"]
     return totals 
 
 
-def showtotals(z):
+def showtotals(z=None):
+
+    if not z:
+        z = gatherstat()
     
-    print "Zones summary:"
+    print "\nZones summary:"
     print "---------------------------------------"
-    print "Host memory:\t\t\t%s" % ( str_units(int(z["hostmem"]), "G"))
-    print "Zones running:\t\t\t %s" % (get_total(z, "zcount"))
-    print "Total phys memory capped:\t %s " % (get_total(z, "capped", "G"))
-    print "Total phys memory used:\t\t %s " % (get_total(z, "pmem", "G"))
-    print "Total virtual memory used:\t %s " % ( get_total(z, "vmem", "G"))
-    print "Total phys memory locked:\t %s " %  (get_total(z, "locked", "G"))
+    print "Host memory:\t\t\t{}".format(str_units(int(z["hostmem"]), "G"))
+    print "Zones running:\t\t\t {}".format(get_total(z, "zcount"))
+    print "Total phys memory capped:\t {}".format(get_total(z, "capped", "G"))
+    print "Total phys memory used:\t\t {}".format(get_total(z, "pmem", "G"))
+    print "Total virtual memory used:\t {}".format(get_total(z, "vmem", "G"))
+    print "Total phys memory locked:\t {}".format(get_total(z, "locked", "G"))
     
+
+def show_zones():
+
+    zstat = gatherstat()
+    zmemstat = {}
+
+    for zname in zstat.keys():
+
+        if not isinstance(zstat[zname], types.DictType):
+            continue
+
+        pmem = zstat[zname]["pmem"]
+        zmemstat[zname] = int(pmem)
+    
+
+    print "Zones on host {}:".format(gethostname())
+    print "---------------------------------------"
+    for key, value in sorted(zmemstat.items(), key=lambda(k,v): (v,k)):
+        print "{}:\t{:.1f}GB".format(key, value / 1024 / 1024.0)
+    
+    showtotals(zstat)
+    return
+
+
 
 def http_do(method, url, data):
 
@@ -194,19 +223,19 @@ def http_do(method, url, data):
 
         if r:
             print r.url
-            print "HTTP %s %s" % (method, r.status_code)
+            print "HTTP {} {}".format(method, r.status_code)
 
             if (r.status_code == 204 or r.status_code == 200):
                 return r
             else:
-                err_stop("HTTP error: " + str(r.status_code))
+                err_stop("HTTP error: {}".format(r.status_code))
         else:
             err_stop("No response from requests lib")
 
     except requests.ConnectionError:
-        err_stop("requests lib Connection error")
+        err_stop("requests lib: connection error")
     except requests.HTTPError as e:
-        err_stop("requests lib HTTP error" + e.response.status_code)
+        err_stop("requests lib: HTTP error" + e.response.status_code)
     except requests.exceptions.InvalidURL:
         err_stop("requests lib error: bad URL")
 
@@ -222,12 +251,14 @@ def influx_read(what):
         resp = http_do("GET", url, data)
         return resp.json()
     else:
-        return
+        return None
 
 
 def show_dbs():
     text = influx_read("db")
-    print json.dumps(text, indent=4)
+
+    if text:
+        print json.dumps(text, indent=4)
 
 
 def influx_write(data):
@@ -235,18 +266,19 @@ def influx_write(data):
     global INFX_URL
     global INFX_DB
 
-    url = INFX_URL + "write?db="+ INFX_DB
+    url = INFX_URL + "write?db=" + INFX_DB
     resp = http_do("POST", url, data)
 
 
-def store_metrics(zstat):
+def store_metrics():
+
+    zstat = gatherstat()
 
     data = ""
-    host = gethostname()
-    tot = get_all_totals(zstat)
+    totals = get_all_totals(zstat)
 
-    for key,val in tot.items():
-        data += "{},host={} value={}\n".format(key,host,val)
+    for key,val in totals.items():
+        data += "{},host={} value={}\n".format(key, gethostname(), val)
 
     influx_write(data)
 
@@ -254,17 +286,18 @@ def store_metrics(zstat):
 #START
 
 try:
-    sys.argv[1]
-    a = sys.argv[1]
+    if sys.argv[1]:
+        a = sys.argv[1]
 
     if (a == "-d"):
-        # save stats
-        zstat = gatherstat()
-        store_metrics(zstat)
+        # Save stats to a database
+        store_metrics()
 
     elif (a == "-ds"):
         show_dbs()
 
+    elif (a == "-zs"):
+        show_zones()
     else:
         show_help()
 
@@ -274,7 +307,6 @@ except IndexError:
     pass
 
 # Human readable output by default
-zstat = gatherstat()
-showtotals(zstat)
+showtotals()
 
 
