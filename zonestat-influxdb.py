@@ -296,7 +296,7 @@ try:
     elif (a == "-ds"):
         show_dbs()
 
-    elif (a == "-zs"):
+    elif (a == "-z"):
         show_zones()
     else:
         show_help()
