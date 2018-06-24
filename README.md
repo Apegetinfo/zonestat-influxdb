@@ -9,7 +9,7 @@ Usage:
 
  Installation: 
 * Edit [influxdb](https://www.influxdata.com/) server address and database name in the script and run it periodically (as a cronjob).
-* Not that zonestat is slow, use cron intervals not less than 3-5 mins, depending on number of monitored zones.
+* Note that zonestat is slow, use cron intervals not less than 3-5 mins, depending on a number of monitored zones.
 * You can use [Grafana](https://grafana.com/) to build graphs and dashboards, using influxdb as a data source.
 
 
