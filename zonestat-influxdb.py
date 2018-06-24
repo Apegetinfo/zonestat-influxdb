@@ -41,7 +41,7 @@ def show_help():
     print "Usage:\n"
     print __file__ + " [args]"
     print '''
-        -z [cpu|mem] show zones resource usage: totals (by default) or show zone list sorted by "cpu" or "mem" 
+        -z [cpu|mem] show zones resource usage: totals (by default) or show zone list sorted by "cpu" or "mem"
         -d           store metrics into influx database. Use this for a cronjob.
     '''
     pass
@@ -183,7 +183,6 @@ def get_total(zones, metric, submetric, units="K"):
             total += to_int(stat[metric][submetric])
         else:
             total = 0
-
     return str_units(total, units)
   
 
@@ -195,10 +194,7 @@ def show_totals(zones=None):
     hostmem = str_units(zones["resource"]["physical-memory"], "G")
     zcount = len(zones) - 1
 
-    # pp = pprint.PrettyPrinter(indent=4)
-    # pp.pprint(zones)
-    
-    print "\nZones summary on [{}]:".format(gethostname()) 
+    print "\nZones summary on [{}]:".format(gethostname())
     print "---------------------------------------"
     print "Host memory:\t\t\t{}".format(hostmem)
     print "Zones running:\t\t\t {}".format(zcount)
@@ -220,10 +216,9 @@ def show_zones(order="mem"):
 
     print "Zones on host [{}]:".format(gethostname())
     print "sorted by {}".format(order)
-    print "---------------------------------------"    
+    print "---------------------------------------"
     for string in zones_sorted:
         print string
-
     show_totals(zstat)
     return
 
@@ -262,8 +257,8 @@ def sort_zones_cpu(zstat):
     if (len(zones) > 0):
         for key, value in sorted(zones.items(), key=lambda(k,v): (v,k), reverse=True):
             zones_sorted.append("{}:\t{}%".format(key, value))
-        return zones_sorted 
-    
+        return zones_sorted
+
 
 def http_do(method, url, data):
 
@@ -360,9 +355,6 @@ def store_metrics():
             data += "{},host={} value={}\n".format(metric, host, totals[metric])
     # print(data)
     influx_write(data)
-    
-
-
 
 #START
 
@@ -372,7 +364,7 @@ try:
 
     if (a == "-d"):
         # Save stats to a database
-        store_metrics()     
+        store_metrics()
 
     elif (a == "-ds"):
         show_dbs()
