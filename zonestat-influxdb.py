@@ -44,7 +44,6 @@ def show_help():
         -z [cpu|mem] show zones resource usage: totals (by default) or show zone list sorted by "cpu" or "mem"
         -d           store metrics into influx database. Use this for a cronjob.
     '''
-    pass
 
 
 def err_stop(msg):
@@ -65,8 +64,7 @@ def gather_stat():
     except OSError as e:
         err_stop("Command not found. This script is for Solaris 11 OS only.")
     except:
-        print "Unexpected error:", sys.exc_info()[0]
-    exit(1)
+        err_stop("Unexpected error: {}".format(sys.exc_info()[0]))
 
 
 def get_parts(line):
@@ -123,8 +121,7 @@ def parse_line_get_metric(line, zname):
                     else:
                         return {curr_metric: {"used": parts[5], "pused": parts[6]}}
     except IndexError:
-        print "IndexError in parse_line_get_metric()"
-        exit(1)
+        err_stop("IndexError in parse_line_get_metric()")
 
 
 def read_stat(input):
@@ -145,8 +142,7 @@ def read_stat(input):
         return zstat
 
     except IndexError:
-        print "IndexError in read_stat()"
-        exit(1)
+        err_stop("IndexError in read_stat()")
 
 
 def to_int(x):
@@ -386,3 +382,5 @@ except IndexError:
 
 # Human readable output by default
 show_totals()
+
+
