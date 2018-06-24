@@ -1,13 +1,14 @@
 #!/usr/bin/python
-#
+# -*- coding: utf-8 -*-
+
+
 # Solaris 11 zones monitoring
-#
-#
+
 # Run this script from crontab with "-d" to store values in influxdb
 # Use Grafana to show graphs
-#
+
 # 2018 <ait.meijin@gmail.com>
-#
+
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -36,24 +37,28 @@ INFX_URL = 'http://influxdb.local:8086/'
 INFX_DB = 'zonestatdb'
 
 
-
 def show_help():
-    # you shall not...
+    print "Usage:\n"
+    print __file__ + " [args]"
+    print '''
+        -z [cpu|mem] show zones resource usage: totals (by default) or show zone list sorted by "cpu" or "mem" 
+        -d           store metrics into influx database. Use this for a cronjob.
+    '''
     pass
-
 
 
 def err_stop(msg):
     if msg:
         print msg
-    sys.exit(1)
+    exit(1)
 
 
-def gatherstat():
+def gather_stat():
 
     try:
-        input = subprocess.check_output(["/usr/bin/zonestat", "-p", "-r", "memory", "1", "1"], stderr = subprocess.STDOUT, shell=None, universal_newlines=None)
-        return readstat(input)
+        input = subprocess.check_output(["/usr/bin/zonestat", "-p", "-r", "psets,memory", "1", "1"], stderr = subprocess.STDOUT, shell=None, universal_newlines=None)
+        parsed = read_stat(input)
+        return parsed
 
     except subprocess.CalledProcessError as e:
         err_stop("zonestat command failed: {}\nCommand line: [{}]\n\n{}".format( e.returncode, e.cmd, e.output))
@@ -61,55 +66,87 @@ def gatherstat():
         err_stop("Command not found. This script is for Solaris 11 OS only.")
     except:
         print "Unexpected error:", sys.exc_info()[0]
-    sys.exit(1)
+    exit(1)
 
 
-def readstat(input):
+def get_parts(line):
 
-    zones = {}
-    lines = input.splitlines()
+    if (len(line) > 0):
+        parts = line.split(":")
+        if (parts[1] not in ("header", "footer")):
+            return list(map(lambda i: i.strip("[]"), parts))
+
+
+def parse_line_get_zname(line):
+
     skip = ("total", "system", "global")
 
+    parts = get_parts(line)
+    if not parts:
+        return
+    if (parts[1] == "processor-set"):
+        # processor-set fields can vary, skip them
+        return
+    zname = parts[3]
+    if (zname in skip):
+        return
+    
+    return zname
+
+
+def parse_line_get_metric(line, zname):
+
     try:
-        for line in lines:
+        memory_metrics = ("physical-memory", "virtual-memory", "locked-memory")
+        cpu_metrics = ("processor-set",)
 
-            if (len(line) > 0):
+        parts = get_parts(line)
+        if not parts:
+            return
 
-                parts = line.split(":")
+        curr_metric = parts[1]
 
-                if (parts[1] in ("header", "footer")):
+        if (zname == parts[3] and zname == "resource" and curr_metric == "physical-memory" ):
+            # get host physical memory
+            return {curr_metric: parts[4].strip("K")}
+        
+        if (zname in parts and zname != "resource"):
+            for m in memory_metrics + cpu_metrics:
+                if (len(parts) < 6):
                     continue
-
-            else:
-                continue
-
-            zname = parts[3].strip("[]")
-
-            if (zname in skip):
-                continue
-
-            value = parts[4].replace("K","")
-
-            if (zname == "resource"):
-                zones["hostmem"] = value
-                continue
-
-            if (parts[1] == "physical-memory"):
-                zones[zname] = ({"pmem" : value, "capped" : parts[6].replace("K","")})
-
-            elif (parts[1] == "virtual-memory"):
-                zones[zname].update({"vmem" : value})
-
-            elif (parts[1] == "locked-memory"):
-                zones[zname].update({"locked" : value})
-
-            else:
-                continue
+                if curr_metric in memory_metrics:
+                    return {curr_metric: {"used": parts[4].strip("K"), "capped": parts[6].strip("K")}}
+                if curr_metric in cpu_metrics:
+                    if (parts[5] == zname): 
+                        # check if we have `dedicated-cpu` variant of output
+                        return {curr_metric: {"used": parts[6], "pused" :parts[7]}}
+                    else:
+                        return {curr_metric: {"used": parts[5], "pused": parts[6]}}
     except IndexError:
-            print "Debug: index error in readstat()."
-            sys.exit(1)
+        print "IndexError in parse_line_get_metric()"
+        exit(1)
 
-    return zones
+
+def read_stat(input):
+
+    try:
+        lines = input.splitlines()
+
+        znames = filter(lambda(item): item, set(map(parse_line_get_zname, lines)))
+        zstat = {}
+        for z in znames:
+            zstat[z] = {}
+
+        for z in znames:
+            for l in lines:
+                value = parse_line_get_metric(l, z)
+                if value:
+                    zstat[z].update(value)
+        return zstat
+
+    except IndexError:
+        print "IndexError in read_stat()"
+        exit(1)
 
 
 def to_int(x):
@@ -123,6 +160,8 @@ def to_int(x):
 
 def str_units(value, units="K"):
 
+    value = to_int(value)
+
     if units is "M":
         s = str(value/1024) + "M"
     elif units is "G":
@@ -132,80 +171,99 @@ def str_units(value, units="K"):
     return s
 
 
-def get_total(zones, metric, units="K"):
+def get_total(zones, metric, submetric, units="K"):
 
     total = 0
 
-    if (metric == "zcount"):
-        s =  str(len(zones))
-        return s
-
-    for zn in zones:
-
-        if (zn == "hostmem"):
+    for zname in zones:
+        if (zname == "resource"):
             continue
-
-        z = zones[zn]
-
-        if metric in z:
-            total += to_int(z[metric])
+        stat = zones[zname]
+        if metric in stat:
+            total += to_int(stat[metric][submetric])
         else:
             total = 0
 
     return str_units(total, units)
   
 
+def show_totals(zones=None):
 
-def get_all_totals(zstat):
+    if not zones:
+        zones = gather_stat()
 
-    totals = {}
-    metrics = ("zcount", "capped", "pmem", "vmem", "locked")
+    hostmem = str_units(zones["resource"]["physical-memory"], "G")
+    zcount = len(zones) - 1
+
+    # pp = pprint.PrettyPrinter(indent=4)
+    # pp.pprint(zones)
     
-    for m in metrics:
-        totals[m] = get_total(zstat, m)
-
-    totals["hostmem"] = zstat["hostmem"]
-    return totals 
-
-
-def showtotals(z=None):
-
-    if not z:
-        z = gatherstat()
-    
-    print "\nZones summary:"
+    print "\nZones summary on [{}]:".format(gethostname()) 
     print "---------------------------------------"
-    print "Host memory:\t\t\t{}".format(str_units(int(z["hostmem"]), "G"))
-    print "Zones running:\t\t\t {}".format(get_total(z, "zcount"))
-    print "Total phys memory capped:\t {}".format(get_total(z, "capped", "G"))
-    print "Total phys memory used:\t\t {}".format(get_total(z, "pmem", "G"))
-    print "Total virtual memory used:\t {}".format(get_total(z, "vmem", "G"))
-    print "Total phys memory locked:\t {}".format(get_total(z, "locked", "G"))
+    print "Host memory:\t\t\t{}".format(hostmem)
+    print "Zones running:\t\t\t {}".format(zcount)
+    print "Total phys memory capped:\t {}".format(get_total(zones, "physical-memory","capped", "G"))
+    print "Total phys memory used:\t\t {}".format(get_total(zones, "physical-memory", "used", "G"))
+    print "Total virtual memory used:\t {}".format(get_total(zones, "virtual-memory", "used", "G"))
+    print "Total phys memory locked:\t {}".format(get_total(zones, "locked-memory", "used", "G"))
     
 
-def show_zones():
+def show_zones(order="mem"):
 
-    zstat = gatherstat()
-    zmemstat = {}
+    zstat = gather_stat()
+    zones_sorted = []
 
-    for zname in zstat.keys():
+    if (order == "cpu"):
+        zones_sorted = sort_zones_cpu(zstat)
+    else:
+        zones_sorted = sort_zones_mem(zstat)
 
-        if not isinstance(zstat[zname], types.DictType):
-            continue
+    print "Zones on host [{}]:".format(gethostname())
+    print "sorted by {}".format(order)
+    print "---------------------------------------"    
+    for string in zones_sorted:
+        print string
 
-        pmem = zstat[zname]["pmem"]
-        zmemstat[zname] = int(pmem)
-    
-
-    print "Zones on host {}:".format(gethostname())
-    print "---------------------------------------"
-    for key, value in sorted(zmemstat.items(), key=lambda(k,v): (v,k)):
-        print "{}:\t{:.1f}GB".format(key, value / 1024 / 1024.0)
-    
-    showtotals(zstat)
+    show_totals(zstat)
     return
 
 
+def sort_zones_mem(zstat):
+    
+    zones = {}
+    zones_sorted = []
+
+    for zname in zstat.keys():
+        if not isinstance(zstat[zname], types.DictType):
+            continue
+        if ("virtual-memory" in zstat[zname]):
+            value = zstat[zname]["virtual-memory"]["used"]
+            zones[zname] = int(value)
+
+    if (len(zones) > 0):
+        for key, value in sorted(zones.items(), key=lambda(k,v): (v,k), reverse=True):
+            zones_sorted.append("{}:\t{:.1f}GB".format(key, value / 1024 / 1024.0))
+        return zones_sorted
+
+
+def sort_zones_cpu(zstat):
+
+    zones = {}
+    zones_sorted = []
+
+    for zname in zstat.keys():
+        if not isinstance(zstat[zname], types.DictType):
+            continue
+
+        if ("processor-set" in zstat[zname]):
+            value = zstat[zname]["processor-set"]["pused"]
+            zones[zname] = float(value.strip("%"))
+
+    if (len(zones) > 0):
+        for key, value in sorted(zones.items(), key=lambda(k,v): (v,k), reverse=True):
+            zones_sorted.append("{}:\t{}%".format(key, value))
+        return zones_sorted 
+    
 
 def http_do(method, url, data):
 
@@ -243,7 +301,6 @@ def http_do(method, url, data):
 def influx_read(what):
 
     global INFX_URL
-
     url = INFX_URL + "query"
 
     if (what == "db"):
@@ -255,6 +312,7 @@ def influx_read(what):
 
 
 def show_dbs():
+    
     text = influx_read("db")
 
     if text:
@@ -270,17 +328,40 @@ def influx_write(data):
     resp = http_do("POST", url, data)
 
 
+def get_all_totals(zstat):
+    ''' gather totals for all metrics '''
+    totals = {}
+    
+    mem_metrics = ("physical-memory", "virtual-memory", "locked-memory")
+    mem_submetrics  = ("used", "capped")
+    
+    for m in mem_metrics:
+        totals[m] = {}
+        for sm in mem_submetrics:
+            totals[m].update({sm : get_total(zstat, m, sm)})
+
+    totals["hostmem"] = zstat["resource"]["physical-memory"]
+    totals["zcount"] = len(zstat)
+    return totals 
+
+
 def store_metrics():
-
-    zstat = gatherstat()
-
-    data = ""
+    # format metrics and store them into InfluxDB
+    host = gethostname()
+    zstat = gather_stat()
     totals = get_all_totals(zstat)
+    data = ""
 
-    for key,val in totals.items():
-        data += "{},host={} value={}\n".format(key, gethostname(), val)
-
+    for metric in totals:
+        if type(totals[metric]) is dict:
+                for submetric in totals[metric]:
+                    data += "{},host={},type={} value={}\n".format(metric, host, submetric, totals[metric][submetric])
+        else:
+            data += "{},host={} value={}\n".format(metric, host, totals[metric])
+    # print(data)
     influx_write(data)
+    
+
 
 
 #START
@@ -291,22 +372,25 @@ try:
 
     if (a == "-d"):
         # Save stats to a database
-        store_metrics()
+        store_metrics()     
 
     elif (a == "-ds"):
         show_dbs()
 
     elif (a == "-z"):
-        show_zones()
+        if sys.argv[2]:
+            b = sys.argv[2]
+            if ( b in ("mem", "cpu")):
+                show_zones(b)
+        else:
+            show_zones()
     else:
         show_help()
 
-    sys.exit(0)
+    exit(0)
 
 except IndexError:
     pass
 
 # Human readable output by default
-showtotals()
-
-
+show_totals()
