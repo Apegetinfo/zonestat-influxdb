@@ -355,7 +355,7 @@ def store_metrics():
 #START
 
 parser = argparse.ArgumentParser(description="Script to collect Solaris Zones usage statistics.", epilog="*Use '-d' when running this script as a cronjob to collect and store metrics.")
-parser.add_argument("-z", nargs="?", choices=[None, "mem", "cpu"], default="mem", help="show zones resource usage - totals (default) or show zone list sorted by 'cpu' or 'mem'")
+parser.add_argument("-z", nargs="?", choices=[None, "mem", "cpu"], default=None, help="show zones resource usage - totals (default) or show zone list sorted by 'cpu' or 'mem'")
 parser.add_argument("-d",  action="store_true", help="save stats to a database")
 parser.add_argument("-dp", action="store_true", help="test database connection")
 args = parser.parse_args()
