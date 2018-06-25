@@ -24,26 +24,18 @@
 
 
 
-import time
+
 import sys
 import json
 import subprocess
 import requests
 import types
+import argparse
 from socket import gethostname
 
 
 INFX_URL = 'http://influxdb.local:8086/'
 INFX_DB = 'zonestatdb'
-
-
-def show_help():
-    print "Usage:\n"
-    print __file__ + " [args]"
-    print '''
-        -z [cpu|mem] show zones resource usage: totals (by default) or show zone list sorted by "cpu" or "mem"
-        -d           store metrics into influx database. Use this for a cronjob.
-    '''
 
 
 def err_stop(msg):
@@ -256,13 +248,16 @@ def sort_zones_cpu(zstat):
         return zones_sorted
 
 
-def http_do(method, url, data):
+def http_do(method, url, data=None):
 
     r = None
 
     try:
         if (method == "GET"):
-            r = requests.get(url, params=data)
+            if data:
+                r = requests.get(url, params=data)
+            else:
+                r = requests.get(url)
 
         elif (method == "POST"):
             headers = {"Content-Type" : "application/octet-stream"}
@@ -292,12 +287,17 @@ def http_do(method, url, data):
 def influx_read(what):
 
     global INFX_URL
-    url = INFX_URL + "query"
 
     if (what == "db"):
+        url = "{}query".format(INFX_URL)
         data  = {"q":"SHOW DATABASES"}
         resp = http_do("GET", url, data)
         return resp.json()
+
+    elif(what == "ping"):
+        url = "{}ping".format(INFX_URL)
+        resp = http_do("GET", url)
+        return resp
     else:
         return None
 
@@ -305,7 +305,6 @@ def influx_read(what):
 def show_dbs():
     
     text = influx_read("db")
-
     if text:
         print json.dumps(text, indent=4)
 
@@ -352,35 +351,21 @@ def store_metrics():
     # print(data)
     influx_write(data)
 
+
 #START
 
-try:
-    if sys.argv[1]:
-        a = sys.argv[1]
-
-    if (a == "-d"):
-        # Save stats to a database
-        store_metrics()
-
-    elif (a == "-ds"):
-        show_dbs()
-
-    elif (a == "-z"):
-        if sys.argv[2]:
-            b = sys.argv[2]
-            if ( b in ("mem", "cpu")):
-                show_zones(b)
-        else:
-            show_zones()
-    else:
-        show_help()
-
-    exit(0)
-
-except IndexError:
-    pass
-
-# Human readable output by default
-show_totals()
-
+parser = argparse.ArgumentParser(description="Script to collect Solaris Zones usage statistics.", epilog="*Use '-d' when running this script as a cronjob to collect and store metrics.")
+parser.add_argument("-z", nargs="?", choices=[None, "mem", "cpu"], default="mem", help="show zones resource usage - totals (default) or show zone list sorted by 'cpu' or 'mem'")
+parser.add_argument("-d",  action="store_true", help="save stats to a database")
+parser.add_argument("-dp", action="store_true", help="test database connection")
+args = parser.parse_args()
+  
+if args.dp:
+    influx_read("ping")
+elif args.d:
+    store_metrics()
+elif args.z != None:
+    show_zones(args.z)
+else:
+    show_totals()
 
