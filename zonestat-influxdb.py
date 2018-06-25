@@ -34,7 +34,7 @@ import argparse
 from socket import gethostname
 
 
-INFX_URL = 'http://influxdb.local:8086/'
+INFX_URL = 'http://influxdb-local:8086'
 INFX_DB = 'zonestatdb'
 
 
@@ -274,7 +274,7 @@ def http_do(method, url, data=None):
             else:
                 err_stop("HTTP error: {}".format(r.status_code))
         else:
-            err_stop("No response from requests lib")
+            err_stop("No response from requests lib. Check connection settings.")
 
     except requests.ConnectionError:
         err_stop("requests lib: connection error")
@@ -287,15 +287,16 @@ def http_do(method, url, data=None):
 def influx_read(what):
 
     global INFX_URL
+    baseurl = INFX_URL.strip("/")
 
     if (what == "db"):
-        url = "{}query".format(INFX_URL)
+        url = "{}/query".format(baseurl)
         data  = {"q":"SHOW DATABASES"}
         resp = http_do("GET", url, data)
         return resp.json()
 
     elif(what == "ping"):
-        url = "{}ping".format(INFX_URL)
+        url = "{}/ping".format(baseurl)
         resp = http_do("GET", url)
         return resp
     else:
