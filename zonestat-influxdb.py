@@ -314,8 +314,9 @@ def influx_write(data):
 
     global INFX_URL
     global INFX_DB
+    baseurl = INFX_URL.strip("/")
 
-    url = INFX_URL + "write?db=" + INFX_DB
+    url = "{}/write?db={}".format(baseurl, INFX_DB)
     resp = http_do("POST", url, data)
 
 
