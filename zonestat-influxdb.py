@@ -23,8 +23,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-
-
 import sys
 import json
 import subprocess
@@ -167,6 +165,7 @@ def get_total(zones, metric, submetric, units="K"):
         if (zname == "resource"):
             continue
         stat = zones[zname]
+        
         if metric in stat:
             total += to_int(stat[metric][submetric])
         else:
@@ -337,8 +336,9 @@ def get_all_totals(zstat):
     return totals 
 
 
+# format metrics and store them into InfluxDB
 def store_metrics():
-    # format metrics and store them into InfluxDB
+
     host = gethostname()
     zstat = gather_stat()
     totals = get_all_totals(zstat)
@@ -354,20 +354,24 @@ def store_metrics():
     influx_write(data)
 
 
-#START
+def main():
+    
+    parser = argparse.ArgumentParser(description="Script to collect Solaris Zones usage statistics.", epilog="*Use '-d' when running this script as a cronjob to collect and store metrics.")
+    parser.add_argument("-z", nargs="?", choices=[None, "mem", "cpu"], default=None, help="show zones resource usage - totals (default) or show zone list sorted by 'cpu' or 'mem'")
+    parser.add_argument("-d",  action="store_true", help="save stats to a database")
+    parser.add_argument("-dp", action="store_true", help="test database connection")
+    args = parser.parse_args()
+      
+    if args.dp:
+        influx_read("ping")
+    elif args.d:
+        store_metrics()
+    elif args.z != None:
+        show_zones(args.z)
+    else:
+        show_totals()
 
-parser = argparse.ArgumentParser(description="Script to collect Solaris Zones usage statistics.", epilog="*Use '-d' when running this script as a cronjob to collect and store metrics.")
-parser.add_argument("-z", nargs="?", choices=[None, "mem", "cpu"], default=None, help="show zones resource usage - totals (default) or show zone list sorted by 'cpu' or 'mem'")
-parser.add_argument("-d",  action="store_true", help="save stats to a database")
-parser.add_argument("-dp", action="store_true", help="test database connection")
-args = parser.parse_args()
-  
-if args.dp:
-    influx_read("ping")
-elif args.d:
-    store_metrics()
-elif args.z != None:
-    show_zones(args.z)
-else:
-    show_totals()
+
+if __name__ == '__main__':
+        main()
 
