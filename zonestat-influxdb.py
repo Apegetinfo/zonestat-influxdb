@@ -94,10 +94,11 @@ def parse_line_get_metric(line, zname):
 
         curr_metric = parts[1]
 
+        # get host physical memory
         if (zname == parts[3] and zname == "resource" and curr_metric == "physical-memory" ):
-            # get host physical memory
             return {curr_metric: parts[4].strip("K")}
         
+        # get zone metrics
         if (zname in parts and zname != "resource"):
             for m in memory_metrics + cpu_metrics:
                 if (len(parts) < 6):
@@ -183,8 +184,8 @@ def show_totals(zones=None):
 
     print "\nZones summary on [{}]:".format(gethostname())
     print "---------------------------------------"
-    print "Host memory:\t\t\t{}".format(hostmem)
     print "Zones running:\t\t\t {}".format(zcount)
+    print "Host memory:\t\t\t{}".format(hostmem)
     print "Total phys memory capped:\t {}".format(get_total(zones, "physical-memory","capped", "G"))
     print "Total phys memory used:\t\t {}".format(get_total(zones, "physical-memory", "used", "G"))
     print "Total virtual memory used:\t {}".format(get_total(zones, "virtual-memory", "used", "G"))
@@ -192,6 +193,8 @@ def show_totals(zones=None):
     
 
 def show_zones(order="mem"):
+
+    descr = {"mem": "virtual memory used", "cpu": "CPU percentage"}
 
     zstat = gather_stat()
     zones_sorted = []
@@ -202,7 +205,7 @@ def show_zones(order="mem"):
         zones_sorted = sort_zones_mem(zstat)
 
     print "Zones on host [{}]:".format(gethostname())
-    print "sorted by {}".format(order)
+    print "sorted by {}".format(descr[order])
     print "---------------------------------------"
     for string in zones_sorted:
         print string
@@ -249,34 +252,34 @@ def sort_zones_cpu(zstat):
 
 def http_do(method, url, data=None):
 
+    timeout = 5
     r = None
 
     try:
         if (method == "GET"):
+            print url
             if data:
-                r = requests.get(url, params=data)
+                r = requests.get(url, params=data, timeout=timeout)
             else:
                 r = requests.get(url)
-
         elif (method == "POST"):
             headers = {"Content-Type" : "application/octet-stream"}
-            r = requests.post(url, data=data, headers=headers)
+            r = requests.post(url, data=data, headers=headers, timeout=timeout )
         else:
-            err_stop("Unknown HTTP method")
+            err_stop("Unknown HTTP method for http_do()")
 
         if r:
-            print r.url
-            print "HTTP {} {}".format(method, r.status_code)
-
             if (r.status_code == 204 or r.status_code == 200):
+                if method == "GET":
+                    print "HTTP {} {}".format(method, r.status_code)
                 return r
             else:
                 err_stop("HTTP error: {}".format(r.status_code))
         else:
-            err_stop("No response from requests lib. Check connection settings.")
+            err_stop("Check connection settings. HTTP code: [{}]".format(r.status_code))
 
     except requests.ConnectionError:
-        err_stop("requests lib: connection error")
+        err_stop("requests lib: connection error. Check your url and port configuration")
     except requests.HTTPError as e:
         err_stop("requests lib: HTTP error" + e.response.status_code)
     except requests.exceptions.InvalidURL:
@@ -297,16 +300,11 @@ def influx_read(what):
     elif(what == "ping"):
         url = "{}/ping".format(baseurl)
         resp = http_do("GET", url)
-        return resp
+        if resp.status_code == 204:
+            print "OK"
+        return
     else:
         return None
-
-
-def show_dbs():
-    
-    text = influx_read("db")
-    if text:
-        print json.dumps(text, indent=4)
 
 
 def influx_write(data):
@@ -314,9 +312,18 @@ def influx_write(data):
     global INFX_URL
     global INFX_DB
     baseurl = INFX_URL.strip("/")
-
     url = "{}/write?db={}".format(baseurl, INFX_DB)
     resp = http_do("POST", url, data)
+    return
+
+
+# debug def
+def show_dbs():
+    
+    text = influx_read("db")
+    if text:
+        print json.dumps(text, indent=4)
+
 
 
 def get_all_totals(zstat):
@@ -332,7 +339,7 @@ def get_all_totals(zstat):
             totals[m].update({sm : get_total(zstat, m, sm)})
 
     totals["hostmem"] = zstat["resource"]["physical-memory"]
-    totals["zcount"] = len(zstat)
+    totals["zcount"] = len(zstat) - 1
     return totals 
 
 
@@ -356,7 +363,7 @@ def store_metrics():
 
 def main():
     
-    parser = argparse.ArgumentParser(description="Script to collect Solaris Zones usage statistics.", epilog="*Use '-d' when running this script as a cronjob to collect and store metrics.")
+    parser = argparse.ArgumentParser(description="Script for collecting Solaris Zones usage statistics.", epilog="*Use '-d' when running this script as a cronjob to collect and store metrics.")
     parser.add_argument("-z", nargs="?", choices=[None, "mem", "cpu"], default=None, help="show zones resource usage - totals (default) or show zone list sorted by 'cpu' or 'mem'")
     parser.add_argument("-d",  action="store_true", help="save stats to a database")
     parser.add_argument("-dp", action="store_true", help="test database connection")
